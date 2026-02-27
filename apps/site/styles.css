@@ -54,6 +54,16 @@ a {
   color: var(--brand);
 }
 
+.brand-inline {
+  display: none;
+  text-decoration: none;
+  font-weight: 700;
+  font-size: 1.52rem;
+  letter-spacing: 0.2px;
+  color: var(--brand);
+  white-space: nowrap;
+}
+
 .header-row {
   display: flex;
   align-items: center;
@@ -329,6 +339,37 @@ footer {
 
 #mg-chat-send:disabled {
   opacity: 0.65;
+}
+
+@media (min-width: 621px) {
+  .topbar {
+    padding: 12px 20px;
+    gap: 0;
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .brand-inline {
+    display: inline-block;
+  }
+
+  .header-row {
+    width: 100%;
+    justify-content: flex-start;
+    gap: 12px;
+  }
+
+  .header-avatar {
+    width: 58px;
+    height: 58px;
+  }
+
+  .nav {
+    margin-left: auto;
+    justify-content: flex-end;
+  }
 }
 
 @media (max-width: 900px) {
