@@ -4,10 +4,27 @@ function json(data, status = 200) {
     headers: {
       "content-type": "application/json; charset=utf-8",
       "access-control-allow-origin": "*",
-      "access-control-allow-methods": "POST,OPTIONS",
+      "access-control-allow-methods": "GET,POST,OPTIONS",
       "access-control-allow-headers": "content-type"
     }
   });
+}
+
+async function listArticles(env, limit) {
+  const url = new URL(`${env.SUPABASE_URL}/rest/v1/articles`);
+  url.searchParams.set("select", "title,source_url,source_site,published_at,excerpt");
+  url.searchParams.set("order", "published_at.desc.nullslast");
+  url.searchParams.set("limit", String(limit));
+
+  const r = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+    }
+  });
+  if (!r.ok) throw new Error(`Supabase articles error: ${r.status}`);
+  return r.json();
 }
 
 async function retrieveChunks(env, queryText) {
@@ -126,6 +143,18 @@ function fallbackFromSources(rows) {
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") return json({ ok: true });
+    const url = new URL(request.url);
+
+    if (request.method === "GET" && (url.pathname === "/api/articles" || url.pathname === "/api/articles/")) {
+      const limit = Math.max(1, Math.min(100, Number(url.searchParams.get("limit") || "50")));
+      try {
+        const items = await listArticles(env, limit);
+        return json({ items });
+      } catch (err) {
+        return json({ error: "Istek islenemedi", detail: String(err) }, 500);
+      }
+    }
+
     if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
     try {
