@@ -198,10 +198,11 @@ function buildRelatedArticles(rows, question, limit = 5) {
 
   let prioritized = ranked;
   if (withTitleMatch.length > 0) {
+    const strictFloor = bestSimilarity > 0 ? bestSimilarity * 0.8 : 0;
     const strongNonTitle = withoutTitleMatch.filter(
-      (row) => Number(row.similarity || 0) >= similarityFloor && Number(row._chunkHitCount || 0) >= 2
+      (row) => Number(row.similarity || 0) >= strictFloor && Number(row._chunkHitCount || 0) >= 3
     );
-    prioritized = [...withTitleMatch, ...strongNonTitle];
+    prioritized = [...withTitleMatch, ...strongNonTitle.slice(0, 2)];
   } else {
     prioritized = ranked.filter(
       (row) => Number(row.similarity || 0) >= similarityFloor && Number(row._chunkHitCount || 0) >= 1
