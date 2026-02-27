@@ -32,7 +32,6 @@
 
   function setOpen(open) {
     panel.classList.toggle('open', open);
-    if (open) input.focus();
   }
 
   btn.addEventListener('click', () => setOpen(!panel.classList.contains('open')));
@@ -103,7 +102,6 @@
     } finally {
       pending = false;
       send.disabled = false;
-      input.focus();
     }
   }
 
