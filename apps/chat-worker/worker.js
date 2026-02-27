@@ -42,6 +42,21 @@ function countKeywordHits(text, keywords) {
   return hits;
 }
 
+function countKeywordOccurrences(text, keywords) {
+  if (!text || !keywords?.length) return 0;
+  let total = 0;
+  for (const keyword of keywords) {
+    let start = 0;
+    while (true) {
+      const idx = text.indexOf(keyword, start);
+      if (idx === -1) break;
+      total += 1;
+      start = idx + keyword.length;
+    }
+  }
+  return total;
+}
+
 function rankRowsForQuestion(rows, question) {
   const keywords = extractKeywords(question);
   const phrase = keywords.slice(0, 2).join(" ");
@@ -53,6 +68,7 @@ function rankRowsForQuestion(rows, question) {
       const similarity = Number(row.similarity || 0);
       const titleHits = countKeywordHits(title, keywords);
       const chunkHits = countKeywordHits(chunk, keywords);
+      const chunkHitCount = countKeywordOccurrences(chunk, keywords);
       const allKeywordsInTitle = keywords.length > 0 && keywords.every((k) => title.includes(k));
       const phraseInTitle = phrase.length >= 5 && title.includes(phrase);
 
@@ -60,6 +76,7 @@ function rankRowsForQuestion(rows, question) {
         similarity +
         (titleHits * 2.2) +
         (chunkHits * 0.35) +
+        (chunkHitCount * 0.12) +
         (allKeywordsInTitle ? 2.4 : 0) +
         (phraseInTitle ? 1.2 : 0);
 
@@ -67,6 +84,7 @@ function rankRowsForQuestion(rows, question) {
         ...row,
         _idx: idx,
         _titleHits: titleHits,
+        _chunkHitCount: chunkHitCount,
         _relevance: relevance
       };
     })
@@ -175,7 +193,20 @@ function buildRelatedArticles(rows, question, limit = 5) {
   const ranked = rankRowsForQuestion(rows, question);
   const withTitleMatch = ranked.filter((row) => row._titleHits > 0);
   const withoutTitleMatch = ranked.filter((row) => row._titleHits === 0);
-  const prioritized = [...withTitleMatch, ...withoutTitleMatch];
+  const bestSimilarity = Number(ranked?.[0]?.similarity || 0);
+  const similarityFloor = bestSimilarity > 0 ? bestSimilarity * 0.55 : 0;
+
+  let prioritized = ranked;
+  if (withTitleMatch.length > 0) {
+    const strongNonTitle = withoutTitleMatch.filter(
+      (row) => Number(row.similarity || 0) >= similarityFloor && Number(row._chunkHitCount || 0) >= 2
+    );
+    prioritized = [...withTitleMatch, ...strongNonTitle];
+  } else {
+    prioritized = ranked.filter(
+      (row) => Number(row.similarity || 0) >= similarityFloor && Number(row._chunkHitCount || 0) >= 1
+    );
+  }
 
   const unique = [];
   const seen = new Set();
