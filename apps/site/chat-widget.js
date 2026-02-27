@@ -46,10 +46,6 @@
 
   function formatBotText(text) {
     let html = escapeHtml(text || '');
-    html = html.replace(
-      /(https?:\/\/[^\s]+)/g,
-      '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
-    );
     html = html.replace(/\n/g, '<br>');
     return html;
   }
@@ -80,6 +76,25 @@
     }
   }
 
+  function addRelatedArticles(items) {
+    if (!Array.isArray(items) || items.length === 0) return;
+
+    const links = [];
+    for (const item of items) {
+      if (!item?.url) continue;
+      const title = escapeHtml(item.title || 'Makale');
+      const href = escapeHtml(item.url);
+      links.push(`- <a href="${href}" target="_blank" rel="noopener noreferrer">${title}</a>`);
+    }
+    if (!links.length) return;
+
+    const d = document.createElement('div');
+    d.className = 'msg bot';
+    d.innerHTML = ['Ilgili makaleler', ...links].join('<br>');
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+  }
+
   async function ask() {
     if (pending) return;
     const message = input.value.trim();
@@ -97,6 +112,7 @@
       });
       const data = await r.json();
       await typeBotMessage(data.reply || data.error || 'Yanıt alınamadı.');
+      addRelatedArticles(data.relatedArticles || []);
     } catch {
       add('Servise ulaşılamadı.', 'bot');
     } finally {

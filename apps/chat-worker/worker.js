@@ -74,7 +74,7 @@ async function generateAnswer(apiKey, question, rows) {
   const context = topRows
     .map((r, i) => {
       const snippet = (r.chunk_text || "").slice(0, 1400);
-      return `Kaynak ${i + 1}: ${r.title}\nURL: ${r.source_url}\nİçerik Özeti:\n${snippet}`;
+      return `Kaynak ${i + 1}: ${r.title}\nİçerik Özeti:\n${snippet}`;
     })
     .join("\n\n");
 
@@ -87,7 +87,8 @@ Kurallar:
 - Gerekliyse 3-6 maddede özetle.
 - Markdown işaretleri kullanma (**, __, ##, * gibi).
 - Düz metin yaz; maddeleme için sadece "-" kullan.
-- Cevabın sonuna "Kaynaklar" başlığıyla ilgili URL'leri ekle.
+- URL paylaşma.
+- "Kaynaklar", "İlgili makaleler" gibi bir başlık ekleme.
 
 Soru: ${question}
 
@@ -96,8 +97,7 @@ ${context}
 
 Cevap formatı:
 1) Kısa yanıt
-2) Gerekirse maddeler
-3) Kaynaklar (URL listesi)`;
+2) Gerekirse maddeler`;
 
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
     method: "POST",
@@ -120,24 +120,22 @@ Cevap formatı:
   return text;
 }
 
-function fallbackFromSources(rows) {
+function buildRelatedArticles(rows, limit = 5) {
   const unique = [];
   const seen = new Set();
   for (const row of rows || []) {
-    if (!seen.has(row.source_url)) {
-      seen.add(row.source_url);
-      unique.push(row);
-    }
-    if (unique.length >= 5) break;
+    if (!row?.source_url || seen.has(row.source_url)) continue;
+    seen.add(row.source_url);
+    unique.push({ title: row.title || "Makale", url: row.source_url });
+    if (unique.length >= limit) break;
   }
-  if (!unique.length) return "Bu konuda kaynaklarda bilgi bulamadım.";
+  return unique;
+}
 
-  const lines = [
-    "Bu soru için ilgili yazılar bulundu. Kısa kaynak listesi:",
-    ...unique.map((item) => `- ${item.title}: ${item.source_url}`),
-    "İstersen bu kaynaklardan birini seç, sadece o yazı üzerinden net bir özet çıkarayım."
-  ];
-  return lines.join("\n");
+function fallbackFromSources(rows) {
+  const related = buildRelatedArticles(rows);
+  if (!related.length) return "Bu konuda kaynaklarda bilgi bulamadım.";
+  return "Bu soru için ilgili makaleler bulundu. İstersen listedeki bir makaleyi seç, sadece onun üzerinden net bir özet çıkarayım.";
 }
 
 export default {
@@ -175,8 +173,9 @@ export default {
         reply = fallbackFromSources(rows);
       }
 
-      const sources = [...new Set(rows.map((r) => r.source_url))];
-      return json({ reply, sources });
+      const relatedArticles = buildRelatedArticles(rows);
+      const sources = relatedArticles.map((item) => item.url);
+      return json({ reply, sources, relatedArticles });
     } catch (err) {
       return json({ error: "İstek işlenemedi", detail: String(err) }, 500);
     }
