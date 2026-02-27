@@ -68,6 +68,8 @@ Kurallar:
 - Bilgi yoksa net olarak "Bu konuda kaynaklarda bilgi bulamadım." de.
 - Cevap Türkçe, derli toplu ve anlaşılır olsun.
 - Gerekliyse 3-6 maddede özetle.
+- Markdown işaretleri kullanma (**, __, ##, * gibi).
+- Düz metin yaz; maddeleme için sadece "-" kullan.
 - Cevabın sonuna "Kaynaklar" başlığıyla ilgili URL'leri ekle.
 
 Soru: ${question}

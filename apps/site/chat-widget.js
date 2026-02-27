@@ -22,12 +22,47 @@
 
   btn.addEventListener('click', () => panel.classList.toggle('open'));
 
+  function escapeHtml(text) {
+    return text
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;');
+  }
+
+  function formatBotText(text) {
+    let html = escapeHtml(text || '');
+    html = html.replace(
+      /(https?:\/\/[^\s]+)/g,
+      '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+    );
+    html = html.replace(/\n/g, '<br>');
+    return html;
+  }
+
   function add(text, who) {
     const d = document.createElement('div');
     d.className = `msg ${who}`;
-    d.textContent = text;
+    if (who === 'bot') {
+      d.innerHTML = formatBotText(text);
+    } else {
+      d.textContent = text;
+    }
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
+    return d;
+  }
+
+  async function typeBotMessage(text) {
+    const container = add('', 'bot');
+    const source = text || '';
+    const chunkSize = 3;
+    const delayMs = 14;
+    for (let i = 0; i < source.length; i += chunkSize) {
+      const partial = source.slice(0, i + chunkSize);
+      container.innerHTML = formatBotText(partial);
+      log.scrollTop = log.scrollHeight;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
   }
 
   async function ask() {
@@ -43,7 +78,7 @@
         body: JSON.stringify({ message })
       });
       const data = await r.json();
-      add(data.reply || data.error || 'Yanıt alınamadı.', 'bot');
+      await typeBotMessage(data.reply || data.error || 'Yanıt alınamadı.');
     } catch {
       add('Servise ulaşılamadı.', 'bot');
     }

@@ -57,6 +57,11 @@ nav a {
 .msg { margin: 8px 0; padding: 8px 10px; border-radius: 8px; font-size: 14px; }
 .msg.user { background: #fef3c7; }
 .msg.bot { background: #f3f4f6; }
+.msg.bot a {
+  color: #1d4ed8;
+  text-decoration: underline;
+  word-break: break-all;
+}
 #mg-chat-input-row { display: flex; border-top: 1px solid #e5e7eb; }
 #mg-chat-input { flex: 1; border: 0; padding: 10px; }
 #mg-chat-send { border: 0; background: var(--accent); color: #fff; padding: 0 14px; }
