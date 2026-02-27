@@ -137,17 +137,43 @@ def clean_text(raw: str) -> str:
 
 
 def parse_date(soup: BeautifulSoup) -> Optional[str]:
+    # Prefer machine-readable metadata to avoid parsing page clock widgets (HH:MM) as "today".
     candidates = []
-    for t in soup.select("time"):
-        if t.get("datetime"):
-            candidates.append(t.get("datetime"))
-        candidates.append(t.get_text(" ", strip=True))
 
+    meta_selectors = [
+        "meta[name='datePublished']",
+        "meta[name='dateModified']",
+        "meta[property='article:published_time']",
+        "meta[property='article:modified_time']",
+        "meta[itemprop='datePublished']",
+        "meta[itemprop='dateModified']",
+        "meta[name='pubdate']",
+    ]
+    for sel in meta_selectors:
+        for m in soup.select(sel):
+            content = (m.get("content") or "").strip()
+            if content:
+                candidates.append(content)
+
+    for t in soup.select("time[datetime]"):
+        dt = (t.get("datetime") or "").strip()
+        if dt:
+            candidates.append(dt)
+
+    # Fallback to visible date strings (ignore plain clock times like "20:36")
     for sel in [".date", ".tarih", ".post-date", ".publish-date", "[itemprop='datePublished']"]:
         for n in soup.select(sel):
-            candidates.append(n.get_text(" ", strip=True))
+            txt = (n.get_text(" ", strip=True) or "").strip()
+            if txt:
+                candidates.append(txt)
 
+    seen = set()
     for c in candidates:
+        if not c or c in seen:
+            continue
+        seen.add(c)
+        if re.fullmatch(r"\\d{1,2}:\\d{2}(:\\d{2})?", c):
+            continue
         try:
             d = dtparser.parse(c, dayfirst=True, fuzzy=True)
             return d.isoformat()
