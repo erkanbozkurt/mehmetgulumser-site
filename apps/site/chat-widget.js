@@ -11,7 +11,11 @@
     <div id="mg-chat-log"><div class="msg bot">Merhaba, Mehmet Gülümser yazıları hakkında soru sorabilirsiniz.</div></div>
     <div id="mg-chat-input-row">
       <input id="mg-chat-input" placeholder="Bir soru yazın..." />
-      <button id="mg-chat-send">Gönder</button>
+      <button id="mg-chat-send" aria-label="Gonder" title="Gonder">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M3 20.5l18-8.5L3 3.5v6l12 2.5-12 2.5z"></path>
+        </svg>
+      </button>
     </div>
   `;
   const btn = document.createElement('button');
@@ -28,7 +32,6 @@
 
   function setOpen(open) {
     panel.classList.toggle('open', open);
-    btn.style.display = open ? 'none' : 'block';
     if (open) input.focus();
   }
 
@@ -86,7 +89,6 @@
     input.value = '';
     pending = true;
     send.disabled = true;
-    send.textContent = '...';
 
     try {
       const r = await fetch(API_URL, {
@@ -101,7 +103,6 @@
     } finally {
       pending = false;
       send.disabled = false;
-      send.textContent = 'Gönder';
       input.focus();
     }
   }

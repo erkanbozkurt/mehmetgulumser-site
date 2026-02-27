@@ -222,7 +222,7 @@ footer {
 #mg-chat-btn {
   position: fixed;
   right: 20px;
-  bottom: 28px;
+  bottom: 18px;
   width: 58px;
   height: 58px;
   border-radius: 50%;
@@ -321,7 +321,10 @@ footer {
   border: 0;
   background: var(--brand);
   color: #fff;
-  padding: 0 14px;
+  width: 46px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
 }
 
 #mg-chat-send:disabled {
@@ -378,13 +381,13 @@ footer {
 
   #mg-chat-btn {
     right: 14px;
-    bottom: 86px;
+    bottom: 14px;
   }
 
   #mg-chat-panel {
     right: 12px;
     left: 12px;
-    bottom: 14px;
+    bottom: 84px;
     width: auto;
     max-width: none;
     height: 50vh;
