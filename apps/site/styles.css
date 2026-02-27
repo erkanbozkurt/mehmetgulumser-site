@@ -380,17 +380,19 @@ footer {
 
   .brand-inline {
     display: inline-block;
+    font-size: 1.92rem;
+    margin: 0 0 0 22px;
   }
 
   .header-row {
     width: 100%;
     justify-content: flex-start;
-    gap: 12px;
+    gap: 24px;
   }
 
   .header-avatar {
-    width: 58px;
-    height: 58px;
+    width: 74px;
+    height: 74px;
   }
 
   .nav {
