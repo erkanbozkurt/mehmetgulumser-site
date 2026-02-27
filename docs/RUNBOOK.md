@@ -121,10 +121,13 @@ DNS propagation notu:
 ## 11) Otomatik Guncelleme (GitHub Actions)
 Workflow:
 - `.github/workflows/update-content.yml`
+- `.github/workflows/deploy-pages.yml` (site deploy)
 
 Gereken GitHub Secrets:
 - `DATABASE_URL`
 - `GEMINI_API_KEY`
+- `CLOUDFLARE_API_TOKEN` (Pages deploy icin)
+- `CLOUDFLARE_ACCOUNT_ID`
 
 Akis:
 - Scrape + upsert
