@@ -5,19 +5,21 @@ Bu repo, Mehmet Gülümser için düşük trafikte ücretsiz servislerle çalı�
 ## Stack
 - Website: Cloudflare Pages (statik)
 - Chat API: Cloudflare Workers
-- Database + Vector: Supabase Postgres + pgvector
-- LLM + Embedding: Gemini API
+- Database: Supabase Postgres
+- Retrieval: Postgres Full-Text Search (FTS) (no embeddings)
+- LLM: Gemini API
 - Scraper/Indexer: Python scriptleri (GitHub Actions ile cron çalıştırılabilir)
 
 ## Klasorler
 - `infra/supabase/schema.sql`: tablo, vektör index, retrieval RPC
 - `services/scraper/scrape_and_store.py`: iki siteden yazı toplama + DB upsert
-- `services/indexer/index_articles.py`: chunk + embedding + `article_chunks` indexleme
+- `services/indexer/index_articles.py`: chunk + FTS indexleme (`article_chunks_fts`)
 - `apps/chat-worker/worker.js`: chatbot endpoint
 - `apps/site/`: basit web + chat widget
 
 ## Kurulum
 1. Supabase projesi ac, SQL Editor'da `infra/supabase/schema.sql` calistir.
+2. SQL Editor'da `infra/supabase/migrations/001_fts_chunks.sql` calistir (FTS retrieval icin).
 2. `.env.example` dosyasini `.env` olarak kopyala ve degiskenleri doldur.
 3. Python ortamı:
    - `python3 -m venv .venv && source .venv/bin/activate`

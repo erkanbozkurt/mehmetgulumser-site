@@ -12,6 +12,7 @@ import psycopg
 import requests
 from bs4 import BeautifulSoup
 from dateutil import parser as dtparser
+from dotenv import load_dotenv
 from slugify import slugify
 
 HEADERS = {
@@ -75,6 +76,10 @@ def find_next_pages(soup: BeautifulSoup, base_url: str, listing_url: str) -> set
         full = normalize_url(urljoin(base_url, href))
         full_path = urlparse(full).path.rstrip("/")
         if listing_path and not full_path.startswith(listing_path):
+            continue
+        # Numeric pagination like /yazar/mehmet-gulumser/2
+        if listing_path and re.fullmatch(re.escape(listing_path) + r"/\d+", full_path):
+            urls.add(full)
             continue
         if any(k in txt for k in ["sonraki", "next", ">", "ileri", "devam"]):
             urls.add(full)
@@ -305,7 +310,8 @@ def upsert_supabase(articles: Iterable[Article], db_url: str):
     if not db_url:
         raise RuntimeError("DATABASE_URL boş. Supabase upsert için DATABASE_URL verin.")
 
-    with psycopg.connect(db_url) as conn:
+    # Supabase pooler can behave badly with prepared statements; disable them.
+    with psycopg.connect(db_url, prepare_threshold=None) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -363,6 +369,9 @@ def upsert_supabase(articles: Iterable[Article], db_url: str):
 
 
 def main():
+    # Allow running locally without exporting env vars manually.
+    load_dotenv()
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="data/raw/articles.json")
     parser.add_argument("--max-pages", type=int, default=50)

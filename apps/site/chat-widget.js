@@ -1,5 +1,5 @@
 (() => {
-  const API_URL = window.MG_CHAT_API_URL || 'https://mehmet-gulumser-chat.<YOUR_SUBDOMAIN>.workers.dev';
+  const API_URL = window.MG_CHAT_API_URL || 'https://mehmet-gulumser-chat.balaansre-dfd.workers.dev';
 
   const panel = document.createElement('div');
   panel.id = 'mg-chat-panel';

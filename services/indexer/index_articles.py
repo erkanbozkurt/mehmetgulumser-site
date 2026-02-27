@@ -1,13 +1,11 @@
 import os
-from typing import Iterable
 
 import psycopg
 from dotenv import load_dotenv
-from google import genai
 
-load_dotenv()
+# Load from repo root when run locally; avoids find_dotenv() edge-cases.
+load_dotenv(".env")
 
-EMBED_MODEL = "text-embedding-004"
 CHUNK_SIZE = 1200
 CHUNK_OVERLAP = 200
 
@@ -26,22 +24,14 @@ def chunk_text(text: str) -> list[str]:
     return chunks
 
 
-def embedding_to_pgvector(values: Iterable[float]) -> str:
-    return "[" + ",".join(f"{v:.8f}" for v in values) + "]"
-
-
 def main():
     db_url = os.getenv("DATABASE_URL")
-    gemini_key = os.getenv("GEMINI_API_KEY")
 
     if not db_url:
         raise RuntimeError("DATABASE_URL tanımlı değil")
-    if not gemini_key:
-        raise RuntimeError("GEMINI_API_KEY tanımlı değil")
 
-    client = genai.Client(api_key=gemini_key)
-
-    with psycopg.connect(db_url) as conn:
+    # Supabase pooler can behave badly with prepared statements; disable them.
+    with psycopg.connect(db_url, prepare_threshold=None) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -60,23 +50,16 @@ def main():
                 if not chunks:
                     continue
 
-                cur.execute("delete from article_chunks where article_id = %s", (article_id,))
+                cur.execute("delete from article_chunks_fts where article_id = %s", (article_id,))
 
                 for idx, chunk in enumerate(chunks):
-                    emb = client.models.embed_content(
-                        model=EMBED_MODEL,
-                        contents=chunk,
-                    )
-                    vector = emb.embeddings[0].values
-                    vector_lit = embedding_to_pgvector(vector)
-
                     cur.execute(
                         """
-                        insert into article_chunks (
-                          article_id, chunk_index, chunk_text, embedding, token_estimate
-                        ) values (%s,%s,%s,%s::vector,%s)
+                        insert into article_chunks_fts (
+                          article_id, chunk_index, chunk_text
+                        ) values (%s,%s,%s)
                         """,
-                        (article_id, idx, chunk, vector_lit, max(1, len(chunk) // 4)),
+                        (article_id, idx, chunk),
                     )
 
                 print(f"[OK] {title} -> {len(chunks)} chunk")

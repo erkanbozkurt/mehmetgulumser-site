@@ -10,21 +10,8 @@ function json(data, status = 200) {
   });
 }
 
-async function embedText(apiKey, text) {
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key=${apiKey}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      content: { parts: [{ text }] }
-    })
-  });
-  if (!r.ok) throw new Error(`Embedding API error: ${r.status}`);
-  const data = await r.json();
-  return data.embedding.values;
-}
-
-async function retrieveChunks(env, embedding) {
-  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/match_article_chunks`, {
+async function retrieveChunks(env, queryText) {
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/match_article_chunks_fts`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -32,7 +19,7 @@ async function retrieveChunks(env, embedding) {
       authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
     },
     body: JSON.stringify({
-      query_embedding: embedding,
+      query_text: queryText,
       match_count: Number(env.TOP_K || "8")
     })
   });
@@ -40,7 +27,32 @@ async function retrieveChunks(env, embedding) {
   return r.json();
 }
 
+function buildBroadQuery(input) {
+  const stopwords = new Set([
+    "acaba","ama","ancak","artık","aslında","az","bazı","belki","ben","bence","beni","benim",
+    "bir","biraz","birçok","bize","biz","bu","çok","çünkü","da","daha","de","diye","dolayı",
+    "en","gibi","hangi","hani","hatta","hem","her","ile","için","ise","işte","kadar","ki",
+    "kim","mi","mı","mu","mü","nasıl","ne","neden","nerede","nereye","niye","o","olan","olarak",
+    "oldu","olduğu","oluyor","olsa","olsun","onlar","orada","sanki","şey","siz","şu","tabii",
+    "ve","veya","ya","yani"
+  ]);
+
+  const words = (input || "")
+    .toLocaleLowerCase("tr-TR")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .split(/\s+/)
+    .filter((word) => word.length >= 4 && !stopwords.has(word));
+
+  const unique = [...new Set(words)].slice(0, 6);
+  if (!unique.length) return "";
+  return unique.join(" OR ");
+}
+
 async function generateAnswer(apiKey, question, rows) {
+  if (!rows || rows.length === 0) {
+    return "Bu konuda kaynaklarda bilgi bulamadım.";
+  }
+
   const context = rows
     .map((r, i) => `Kaynak ${i + 1}: ${r.title}\nURL: ${r.source_url}\nİçerik: ${r.chunk_text}`)
     .join("\n\n");
@@ -67,10 +79,36 @@ ${context}`;
     })
   });
 
-  if (!r.ok) throw new Error(`Gemini API error: ${r.status}`);
+  if (r.status === 429) {
+    return "Şu an çok fazla istek alıyorum (kota/limit). Lütfen 1-2 dakika sonra tekrar deneyin.";
+  }
+  if (!r.ok) {
+    const detail = await r.text();
+    throw new Error(`Gemini API error: ${r.status} ${detail}`);
+  }
   const data = await r.json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Yanıt üretilemedi.";
   return text;
+}
+
+function fallbackFromSources(rows) {
+  const unique = [];
+  const seen = new Set();
+  for (const row of rows || []) {
+    if (!seen.has(row.source_url)) {
+      seen.add(row.source_url);
+      unique.push(row);
+    }
+    if (unique.length >= 5) break;
+  }
+  if (!unique.length) return "Bu konuda kaynaklarda bilgi bulamadım.";
+
+  const lines = [
+    "Bu soru için ilgili yazılar bulundu. Kısa kaynak listesi:",
+    ...unique.map((item) => `- ${item.title}: ${item.source_url}`),
+    "İstersen bu kaynaklardan birini seç, sadece o yazı üzerinden net bir özet çıkarayım."
+  ];
+  return lines.join("\n");
 }
 
 export default {
@@ -82,9 +120,19 @@ export default {
       const { message } = await request.json();
       if (!message || !message.trim()) return json({ error: "Mesaj boş olamaz" }, 400);
 
-      const embedding = await embedText(env.GEMINI_API_KEY, message.trim());
-      const rows = await retrieveChunks(env, embedding);
-      const reply = await generateAnswer(env.GEMINI_API_KEY, message.trim(), rows);
+      let rows = await retrieveChunks(env, message.trim());
+      if (!rows || rows.length === 0) {
+        const broadQuery = buildBroadQuery(message.trim());
+        if (broadQuery) {
+          rows = await retrieveChunks(env, broadQuery);
+        }
+      }
+      let reply = "";
+      try {
+        reply = await generateAnswer(env.GEMINI_API_KEY, message.trim(), rows);
+      } catch (llmErr) {
+        reply = fallbackFromSources(rows);
+      }
 
       const sources = [...new Set(rows.map((r) => r.source_url))];
       return json({ reply, sources });
