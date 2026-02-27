@@ -4,6 +4,10 @@
   const panel = document.createElement('div');
   panel.id = 'mg-chat-panel';
   panel.innerHTML = `
+    <div id="mg-chat-head">
+      <strong>Sohbet</strong>
+      <button id="mg-chat-close" aria-label="Kapat" title="Kapat">✕</button>
+    </div>
     <div id="mg-chat-log"><div class="msg bot">Merhaba, Mehmet Gülümser yazıları hakkında soru sorabilirsiniz.</div></div>
     <div id="mg-chat-input-row">
       <input id="mg-chat-input" placeholder="Bir soru yazın..." />
@@ -19,9 +23,17 @@
   const log = panel.querySelector('#mg-chat-log');
   const input = panel.querySelector('#mg-chat-input');
   const send = panel.querySelector('#mg-chat-send');
+  const closeBtn = panel.querySelector('#mg-chat-close');
   let pending = false;
 
-  btn.addEventListener('click', () => panel.classList.toggle('open'));
+  function setOpen(open) {
+    panel.classList.toggle('open', open);
+    btn.style.display = open ? 'none' : 'block';
+    if (open) input.focus();
+  }
+
+  btn.addEventListener('click', () => setOpen(!panel.classList.contains('open')));
+  closeBtn.addEventListener('click', () => setOpen(false));
 
   function escapeHtml(text) {
     return text

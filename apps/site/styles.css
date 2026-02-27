@@ -222,7 +222,7 @@ footer {
 #mg-chat-btn {
   position: fixed;
   right: 20px;
-  bottom: 18px;
+  bottom: 28px;
   width: 58px;
   height: 58px;
   border-radius: 50%;
@@ -248,12 +248,32 @@ footer {
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
   display: none;
   overflow: hidden;
-  border: 1px solid #ececec;
+  border: 2px solid #d9c2a8;
 }
 
 #mg-chat-panel.open {
   display: flex;
   flex-direction: column;
+}
+
+#mg-chat-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border-bottom: 1px solid #eadccf;
+  background: #fff8ef;
+}
+
+#mg-chat-close {
+  border: 1px solid #d6c5b3;
+  background: #fff;
+  color: #5d4a3e;
+  border-radius: 8px;
+  width: 30px;
+  height: 30px;
+  line-height: 1;
+  cursor: pointer;
 }
 
 #mg-chat-log {
@@ -324,13 +344,28 @@ footer {
     gap: 12px;
   }
 
+  .brand {
+    text-align: center;
+    font-size: 1.52rem;
+  }
+
+  .header-row {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    align-items: center;
+    gap: 10px;
+  }
+
   .nav {
     gap: 8px;
+    justify-content: flex-start;
+    align-content: center;
+    min-height: 90px;
   }
 
   .header-avatar {
-    width: 44px;
-    height: 44px;
+    width: 86px;
+    height: 86px;
   }
 
   .hero {
@@ -343,16 +378,17 @@ footer {
 
   #mg-chat-btn {
     right: 14px;
-    bottom: 14px;
+    bottom: 86px;
   }
 
   #mg-chat-panel {
-    right: 0;
-    left: 0;
-    bottom: 0;
-    width: 100vw;
-    max-width: 100vw;
-    height: 72vh;
-    border-radius: 14px 14px 0 0;
+    right: 12px;
+    left: 12px;
+    bottom: 14px;
+    width: auto;
+    max-width: none;
+    height: 50vh;
+    border-radius: 14px;
+    border: 2px solid #d2b495;
   }
 }
