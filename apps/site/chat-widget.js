@@ -76,6 +76,15 @@
     }
   }
 
+  function addThinking() {
+    const d = document.createElement('div');
+    d.className = 'msg bot thinking';
+    d.innerHTML = 'Dusunuyor<span class="dots"><span>.</span><span>.</span><span>.</span></span>';
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+    return d;
+  }
+
   function addRelatedArticles(items) {
     if (!Array.isArray(items) || items.length === 0) return;
 
@@ -103,6 +112,7 @@
     input.value = '';
     pending = true;
     send.disabled = true;
+    const thinking = addThinking();
 
     try {
       const r = await fetch(API_URL, {
@@ -111,9 +121,11 @@
         body: JSON.stringify({ message })
       });
       const data = await r.json();
+      thinking.remove();
       await typeBotMessage(data.reply || data.error || 'Yanıt alınamadı.');
       addRelatedArticles(data.relatedArticles || []);
     } catch {
+      thinking.remove();
       add('Servise ulaşılamadı.', 'bot');
     } finally {
       pending = false;
