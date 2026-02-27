@@ -49,8 +49,31 @@ a {
 .brand {
   text-decoration: none;
   font-weight: 700;
+  font-size: 1.2rem;
   letter-spacing: 0.2px;
   color: var(--brand);
+}
+
+.profile-badge {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.profile-badge img {
+  width: 54px;
+  height: 54px;
+  border-radius: 999px;
+  border: 2px solid #f3dfc8;
+  object-fit: cover;
+  background: #fff;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.12);
+}
+
+.profile-badge .profile-name {
+  display: none;
+  font-weight: 700;
+  color: #5b4a3e;
 }
 
 .nav {
@@ -82,7 +105,7 @@ a {
 
 .hero h1 {
   margin: 0;
-  font-size: clamp(2rem, 5vw, 3.4rem);
+  font-size: clamp(2.35rem, 6vw, 3.6rem);
   line-height: 1.05;
 }
 
@@ -304,8 +327,17 @@ footer {
     padding: 10px 14px;
   }
 
+  .brand {
+    font-size: 1.28rem;
+  }
+
   .nav {
     gap: 8px;
+  }
+
+  .profile-badge img {
+    width: 46px;
+    height: 46px;
   }
 
   .hero {
