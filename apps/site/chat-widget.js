@@ -12,13 +12,14 @@
   `;
   const btn = document.createElement('button');
   btn.id = 'mg-chat-btn';
-  btn.textContent = '💬';
+  btn.textContent = 'CHAT';
 
   document.body.append(panel, btn);
 
   const log = panel.querySelector('#mg-chat-log');
   const input = panel.querySelector('#mg-chat-input');
   const send = panel.querySelector('#mg-chat-send');
+  let pending = false;
 
   btn.addEventListener('click', () => panel.classList.toggle('open'));
 
@@ -66,10 +67,14 @@
   }
 
   async function ask() {
+    if (pending) return;
     const message = input.value.trim();
     if (!message) return;
     add(message, 'user');
     input.value = '';
+    pending = true;
+    send.disabled = true;
+    send.textContent = '...';
 
     try {
       const r = await fetch(API_URL, {
@@ -81,6 +86,11 @@
       await typeBotMessage(data.reply || data.error || 'Yanıt alınamadı.');
     } catch {
       add('Servise ulaşılamadı.', 'bot');
+    } finally {
+      pending = false;
+      send.disabled = false;
+      send.textContent = 'Gönder';
+      input.focus();
     }
   }
 

@@ -3,27 +3,75 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mehmet Gülümser</title>
+  <title>Mehmet Gulumser | Tur Rehberi ve Yazar</title>
+  <meta name="description" content="Mehmet Gulumser'in yazilari, tur deneyimleri ve dijital asistani." />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
-  <header class="hero">
-    <h1>Mehmet Gülümser</h1>
-    <p>Tur Rehberi ve Yazar</p>
-    <nav>
-      <a href="index.html">Ana Sayfa</a>
-      <a href="yazilar.html">Yazılar</a>
-      <a href="#">Turlar</a>
-      <a href="#">Hakkında</a>
-    </nav>
+  <header class="site-header">
+    <div class="topbar">
+      <a class="brand" href="index.html">Mehmet Gulumser</a>
+      <nav class="nav" aria-label="Ana menu">
+        <a class="active" href="index.html">Ana Sayfa</a>
+        <a href="hakkinda.html">Hakkinda</a>
+        <a href="yazilar.html">Yazilar</a>
+        <a href="turlar.html">Turlar</a>
+        <a href="iletisim.html">Iletisim</a>
+      </nav>
+    </div>
   </header>
 
-  <main class="content">
-    <section>
-      <h2>Hoş Geldiniz</h2>
-      <p>Bu sitede Mehmet Gülümser'in köşe yazıları ve tur rehberliği içerikleri yer alacaktır.</p>
-    </section>
+  <section class="hero">
+    <h1>Anadolu'nun hafizasi, sokak sokak anlatilar</h1>
+    <p>Bu sitede Mehmet Gulumser'in kose yazilarini, gezi notlarini ve tur rehberligi birikimini bir arada bulabilirsiniz. Soru sormak icin sag alttaki asistani kullanabilirsiniz.</p>
+    <div class="cta-row">
+      <a class="btn" href="yazilar.html">Yazilara Gec</a>
+      <a class="btn secondary" href="turlar.html">Tur Programlari</a>
+    </div>
+  </section>
+
+  <main>
+    <h2 class="section-title">One Cikanlar</h2>
+    <div class="grid">
+      <article class="card span-4">
+        <h3>Yazi Arsivi</h3>
+        <p>Ajans Bakircay ve Gazete Yenigun yazilari tek bir arsivde toplanir.</p>
+        <p class="meta">Kaynakli ve duzenli guncellenir.</p>
+      </article>
+      <article class="card span-4">
+        <h3>Tur Rehberligi</h3>
+        <p>Bergama, Ayvalik, Urla ve farkli rotalar icin ozel tema turlari planlanir.</p>
+        <p class="meta">Kultur, tarih ve gastronomi odakli.</p>
+      </article>
+      <article class="card span-4">
+        <h3>Dijital Asistan</h3>
+        <p>Asistan yalnizca mevcut yazi kaynaklarina dayanarak cevap verir.</p>
+        <p class="meta">Kaynak baglantilariyla birlikte.</p>
+      </article>
+    </div>
+
+    <h2 class="section-title">Bu Sitede Neler Var?</h2>
+    <div class="split">
+      <section class="card">
+        <h3>Okuma Deneyimi</h3>
+        <p>Yazilar sade bir yapida, mobilde rahat okunacak bicimde sunulur. Her yazi kaynagina tek tikla ulasilir.</p>
+        <p>Aradiginiz konulari chat asistanina sorarak ilgili yazilara hizli gecis yapabilirsiniz.</p>
+      </section>
+      <section class="card">
+        <h3>Ziyaretciye Hizmet</h3>
+        <p>Asistan su tip sorularda yardimci olur:</p>
+        <ul>
+          <li>Belirli bir bolge veya mekan hakkinda yazilar</li>
+          <li>Bir konuda Mehmet Bey'in goruslerinin ozeti</li>
+          <li>Kaynaga dayali hizli bilgi ve baglantilar</li>
+        </ul>
+      </section>
+    </div>
   </main>
+
+  <footer>
+    Mehmet Gulumser | Tur Rehberi ve Yazar
+  </footer>
 
   <script src="chat-widget.js"></script>
 </body>
