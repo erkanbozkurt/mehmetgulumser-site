@@ -53,8 +53,12 @@ async function generateAnswer(apiKey, question, rows) {
     return "Bu konuda kaynaklarda bilgi bulamadım.";
   }
 
-  const context = rows
-    .map((r, i) => `Kaynak ${i + 1}: ${r.title}\nURL: ${r.source_url}\nİçerik: ${r.chunk_text}`)
+  const topRows = (rows || []).slice(0, 6);
+  const context = topRows
+    .map((r, i) => {
+      const snippet = (r.chunk_text || "").slice(0, 1400);
+      return `Kaynak ${i + 1}: ${r.title}\nURL: ${r.source_url}\nİçerik Özeti:\n${snippet}`;
+    })
     .join("\n\n");
 
   const prompt = `Sen Mehmet Gülümser'in web sitesindeki dijital asistansın.
@@ -62,20 +66,26 @@ async function generateAnswer(apiKey, question, rows) {
 Kurallar:
 - Sadece verilen kaynaklara dayan.
 - Bilgi yoksa net olarak "Bu konuda kaynaklarda bilgi bulamadım." de.
-- Cevap Türkçe, kısa ve net olsun.
+- Cevap Türkçe, derli toplu ve anlaşılır olsun.
+- Gerekliyse 3-6 maddede özetle.
 - Cevabın sonuna "Kaynaklar" başlığıyla ilgili URL'leri ekle.
 
 Soru: ${question}
 
 Kaynaklar:
-${context}`;
+${context}
 
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+Cevap formatı:
+1) Kısa yanıt
+2) Gerekirse maddeler
+3) Kaynaklar (URL listesi)`;
+
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2 }
+      generationConfig: { temperature: 0.15 }
     })
   });
 
