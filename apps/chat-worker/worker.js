@@ -111,7 +111,7 @@ async function listArticles(env, limit) {
   return r.json();
 }
 
-async function retrieveChunks(env, queryText) {
+async function retrieveChunks(env, queryText, matchCount) {
   const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/match_article_chunks_fts`, {
     method: "POST",
     headers: {
@@ -121,11 +121,25 @@ async function retrieveChunks(env, queryText) {
     },
     body: JSON.stringify({
       query_text: queryText,
-      match_count: Number(env.TOP_K || "8")
+      match_count: Number(matchCount || env.TOP_K || "8")
     })
   });
   if (!r.ok) throw new Error(`Supabase RPC error: ${r.status}`);
   return r.json();
+}
+
+function mergeRows(...rowArrays) {
+  const merged = [];
+  const seen = new Set();
+  for (const arr of rowArrays) {
+    for (const row of arr || []) {
+      const key = `${row?.source_url || ""}::${row?.chunk_text || ""}`;
+      if (!row?.source_url || seen.has(key)) continue;
+      seen.add(key);
+      merged.push(row);
+    }
+  }
+  return merged;
 }
 
 function buildBroadQuery(input) {
@@ -192,7 +206,6 @@ Cevap formatı:
 function buildRelatedArticles(rows, question, limit = 5) {
   const ranked = rankRowsForQuestion(rows, question);
   const withTitleMatch = ranked.filter((row) => row._titleHits > 0);
-  const withoutTitleMatch = ranked.filter((row) => row._titleHits === 0);
   const bestSimilarity = Number(ranked?.[0]?.similarity || 0);
   const similarityFloor = bestSimilarity > 0 ? bestSimilarity * 0.55 : 0;
 
@@ -242,24 +255,48 @@ export default {
     try {
       const { message } = await request.json();
       if (!message || !message.trim()) return json({ error: "Mesaj boş olamaz" }, 400);
+      const question = message.trim();
+      const topK = Number(env.TOP_K || "8");
+      const retrievalCount = Math.max(16, topK * 3);
 
-      let rows = await retrieveChunks(env, message.trim());
+      let rows = await retrieveChunks(env, question, retrievalCount);
+      const broadQuery = buildBroadQuery(question);
+      if (broadQuery) {
+        const broadRows = await retrieveChunks(env, broadQuery, retrievalCount);
+        rows = mergeRows(rows, broadRows);
+      }
+
       if (!rows || rows.length === 0) {
-        const broadQuery = buildBroadQuery(message.trim());
-        if (broadQuery) {
-          rows = await retrieveChunks(env, broadQuery);
+        const fallbackQuery = buildBroadQuery(question);
+        if (fallbackQuery) {
+          rows = await retrieveChunks(env, fallbackQuery, retrievalCount);
         }
       }
-      const rankedRows = rankRowsForQuestion(rows, message.trim());
-      const answerRows = rankedRows.slice(0, Math.max(6, Number(env.TOP_K || "8")));
-      let reply = "";
-      try {
-        reply = await generateAnswer(env.GEMINI_API_KEY, message.trim(), answerRows);
-      } catch (llmErr) {
-        reply = fallbackFromSources(answerRows, message.trim());
+      if (!rows || rows.length === 0) {
+        const shorterQuery = extractKeywords(question, 3, 8).join(" OR ");
+        if (shorterQuery) {
+          rows = await retrieveChunks(env, shorterQuery, retrievalCount);
+        }
       }
 
-      const relatedArticles = buildRelatedArticles(answerRows, message.trim());
+      let rankedRows = rankRowsForQuestion(rows, question);
+      if (!rankedRows.length) {
+        const broadQuery2 = buildBroadQuery(question);
+        if (broadQuery2) {
+          const broadOnly = await retrieveChunks(env, broadQuery2, retrievalCount);
+          rankedRows = rankRowsForQuestion(broadOnly, question);
+        }
+      }
+
+      const answerRows = rankedRows.slice(0, Math.max(10, topK + 4));
+      let reply = "";
+      try {
+        reply = await generateAnswer(env.GEMINI_API_KEY, question, answerRows);
+      } catch (llmErr) {
+        reply = fallbackFromSources(answerRows, question);
+      }
+
+      const relatedArticles = buildRelatedArticles(rankedRows, question);
       const sources = relatedArticles.map((item) => item.url);
       return json({ reply, sources, relatedArticles });
     } catch (err) {
