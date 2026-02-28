@@ -192,7 +192,7 @@ Cevap formatı:
   });
 
   if (r.status === 429) {
-    return "Şu an çok fazla istek alıyorum (kota/limit). Lütfen 1-2 dakika sonra tekrar deneyin.";
+    throw new Error("RATE_LIMIT");
   }
   if (!r.ok) {
     const detail = await r.text();
@@ -201,6 +201,51 @@ Cevap formatı:
   const data = await r.json();
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Yanıt üretilemedi.";
   return text;
+}
+
+function sentenceSplit(text) {
+  return (text || "")
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length >= 35 && s.length <= 320);
+}
+
+function buildExtractiveAnswer(question, rows) {
+  if (!rows || rows.length === 0) return "Bu konuda kaynaklarda bilgi bulamadım.";
+
+  const keywords = extractKeywords(question, 3, 8);
+  const scored = [];
+  const seen = new Set();
+
+  for (const row of rows.slice(0, 8)) {
+    const sim = Number(row.similarity || 0);
+    const sentences = sentenceSplit(row.chunk_text);
+    for (const sentence of sentences) {
+      const norm = normalizeForMatch(sentence);
+      if (seen.has(norm)) continue;
+      seen.add(norm);
+      const hits = countKeywordHits(norm, keywords);
+      const score = (hits * 2) + sim;
+      if (hits > 0 || scored.length < 8) {
+        scored.push({ sentence, score });
+      }
+    }
+  }
+
+  const best = scored
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map((x) => `- ${x.sentence}`);
+
+  if (!best.length) {
+    return "Bu konuda kaynaklarda net bilgi bulamadım.";
+  }
+
+  return [
+    "Gemini kotasi dolu oldugu icin kaynaklardan hizli ozet modunda cevap veriyorum:",
+    ...best
+  ].join("\n");
 }
 
 function buildRelatedArticles(rows, question, limit = 5) {
@@ -293,7 +338,12 @@ export default {
       try {
         reply = await generateAnswer(env.GEMINI_API_KEY, question, answerRows);
       } catch (llmErr) {
-        reply = fallbackFromSources(answerRows, question);
+        const msg = String(llmErr || "");
+        if (msg.includes("RATE_LIMIT")) {
+          reply = buildExtractiveAnswer(question, answerRows);
+        } else {
+          reply = fallbackFromSources(answerRows, question);
+        }
       }
 
       const relatedArticles = buildRelatedArticles(rankedRows, question);
