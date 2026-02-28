@@ -25,6 +25,8 @@ LISTING_URLS = [
     "https://www.gazeteyenigun.com.tr/yazar/mehmet-gulumser",
 ]
 
+AJANS_EXPECTED_PROFILE_PATH = "/profil/35/mehmet-gulumser"
+
 
 @dataclass
 class Article:
@@ -91,7 +93,13 @@ def find_next_pages(soup: BeautifulSoup, base_url: str, listing_url: str) -> set
 def extract_article_links(soup: BeautifulSoup, base_url: str, listing_url: str) -> set[str]:
     found = set()
     base_host = urlparse(base_url).netloc
-    for a in soup.select("a[href]"):
+    anchors = soup.select("a[href]")
+    if "ajansbakircay.com" in base_host and AJANS_EXPECTED_PROFILE_PATH in listing_url:
+        scoped = soup.select(".show_more_views .show_more_item a[href]")
+        if scoped:
+            anchors = scoped
+
+    for a in anchors:
         href = a.get("href", "")
         full = normalize_url(urljoin(base_url, href))
         if urlparse(full).netloc != base_host:
@@ -269,6 +277,24 @@ def image_score(url: str) -> int:
     return score
 
 
+def is_expected_ajans_author(soup: BeautifulSoup) -> bool:
+    expected = AJANS_EXPECTED_PROFILE_PATH
+
+    for a in soup.select("a[href]"):
+        txt = (a.get_text(" ", strip=True) or "").lower()
+        if "tüm makaleleri" in txt or "tum makaleleri" in txt:
+            href = normalize_url(urljoin("https://www.ajansbakircay.com", a.get("href", "")))
+            path = urlparse(href).path.rstrip("/")
+            return path == expected
+
+    # Fallback if "Tüm Makaleleri" button is missing.
+    hrefs = {
+        urlparse(normalize_url(urljoin("https://www.ajansbakircay.com", a.get("href", "")))).path.rstrip("/")
+        for a in soup.select("a[href*='/profil/']")
+    }
+    return expected in hrefs
+
+
 def parse_article(url: str) -> Optional[Article]:
     try:
         html = get_html(url)
@@ -277,6 +303,11 @@ def parse_article(url: str) -> Optional[Article]:
         return None
 
     soup = BeautifulSoup(html, "html.parser")
+    host = urlparse(url).netloc.lower()
+    if "ajansbakircay.com" in host and not is_expected_ajans_author(soup):
+        print(f"[SKIP] Farklı yazara ait Ajans yazısı atlandı: {url}")
+        return None
+
     title = ""
     if soup.title:
         title = soup.title.get_text(" ", strip=True)
@@ -332,7 +363,7 @@ def save_json(path: str, articles: list[Article]):
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
-def upsert_supabase(articles: Iterable[Article], db_url: str):
+def upsert_supabase(articles: Iterable[Article], db_url: str, sync_sources: bool = False):
     if not db_url:
         raise RuntimeError("DATABASE_URL boş. Supabase upsert için DATABASE_URL verin.")
 
@@ -391,6 +422,26 @@ def upsert_supabase(articles: Iterable[Article], db_url: str):
                         """,
                         (article_id, image_url, idx),
                     )
+
+            if sync_sources:
+                source_map: dict[str, set[str]] = {}
+                for a in articles:
+                    source_map.setdefault(a.source_site, set()).add(a.source_url)
+
+                for source_site, urls in source_map.items():
+                    if not urls:
+                        continue
+                    cur.execute(
+                        """
+                        delete from articles
+                        where author_id = %s
+                          and source_site = %s
+                          and not (source_url = any(%s))
+                        """,
+                        (author_id, source_site, list(urls)),
+                    )
+                    if cur.rowcount:
+                        print(f"[SYNC] {source_site} için {cur.rowcount} eski kayıt silindi.")
         conn.commit()
 
 
@@ -402,6 +453,7 @@ def main():
     parser.add_argument("--out", default="data/raw/articles.json")
     parser.add_argument("--max-pages", type=int, default=50)
     parser.add_argument("--to-db", action="store_true")
+    parser.add_argument("--sync-db", action="store_true", help="DB'de bu kaynaklara ait eski/yanlış kayıtları siler.")
     args = parser.parse_args()
 
     all_links = set()
@@ -428,7 +480,7 @@ def main():
 
     if args.to_db:
         db_url = os.getenv("DATABASE_URL", "")
-        upsert_supabase(final_articles, db_url)
+        upsert_supabase(final_articles, db_url, sync_sources=args.sync_db)
         print("[OK] Supabase upsert tamamlandı.")
 
 
