@@ -10,6 +10,19 @@ function json(data, status = 200) {
   });
 }
 
+function toPositiveInt(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(0, Math.floor(n));
+}
+
+async function sha256Hex(input) {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const arr = new Uint8Array(digest);
+  return Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 const STOPWORDS = new Set([
   "acaba","ama","ancak","artık","aslında","az","bazı","belki","ben","bence","beni","benim",
   "bir","biraz","birçok","bize","biz","bu","çok","çünkü","da","daha","de","diye","dolayı",
@@ -94,6 +107,23 @@ function rankRowsForQuestion(rows, question) {
     });
 }
 
+async function callSupabaseRpc(env, fnName, payload) {
+  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/${fnName}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+    },
+    body: JSON.stringify(payload)
+  });
+  if (!r.ok) {
+    const detail = await r.text();
+    throw new Error(`Supabase RPC ${fnName} error: ${r.status} ${detail}`);
+  }
+  return r.json();
+}
+
 async function listArticles(env, limit) {
   const url = new URL(`${env.SUPABASE_URL}/rest/v1/articles`);
   url.searchParams.set("select", "title,source_url,source_site,published_at,excerpt");
@@ -112,20 +142,10 @@ async function listArticles(env, limit) {
 }
 
 async function retrieveChunks(env, queryText, matchCount) {
-  const r = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/match_article_chunks_fts`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
-      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
-    },
-    body: JSON.stringify({
-      query_text: queryText,
-      match_count: Number(matchCount || env.TOP_K || "8")
-    })
+  return callSupabaseRpc(env, "match_article_chunks_fts", {
+    query_text: queryText,
+    match_count: Number(matchCount || env.TOP_K || "8")
   });
-  if (!r.ok) throw new Error(`Supabase RPC error: ${r.status}`);
-  return r.json();
 }
 
 function mergeRows(...rowArrays) {
@@ -148,9 +168,84 @@ function buildBroadQuery(input) {
   return unique.join(" OR ");
 }
 
+function getClientIp(request) {
+  const cfIp = request.headers.get("CF-Connecting-IP");
+  if (cfIp) return cfIp.trim();
+  const fwd = request.headers.get("x-forwarded-for");
+  if (fwd) return fwd.split(",")[0].trim();
+  return "unknown-ip";
+}
+
+async function getClientHash(request) {
+  const ip = getClientIp(request);
+  const ua = (request.headers.get("user-agent") || "unknown-ua").slice(0, 180);
+  const raw = `${ip}|${ua}`;
+  const hash = await sha256Hex(raw);
+  return hash.slice(0, 40);
+}
+
+function limitMessage(reason) {
+  if (reason === "ip_minute_limit") {
+    return "Cok hizli soru gonderildi. Lutfen kisa bir sure bekleyip tekrar deneyin.";
+  }
+  if (reason === "daily_request_limit") {
+    return "Gunluk sohbet limiti doldu. Lutfen yarin tekrar deneyin.";
+  }
+  if (reason === "monthly_request_limit") {
+    return "Aylik sohbet limiti doldu. Lutfen sonraki ay tekrar deneyin.";
+  }
+  if (reason === "daily_token_limit") {
+    return "Gunluk yapay zeka butcesi doldu. Lutfen yarin tekrar deneyin.";
+  }
+  if (reason === "monthly_token_limit") {
+    return "Aylik yapay zeka butcesi doldu. Lutfen sonraki ay tekrar deneyin.";
+  }
+  return "Sohbet gecici olarak limitlendi. Lutfen daha sonra tekrar deneyin.";
+}
+
+async function enforceChatGuard(env, clientHash) {
+  const minuteLimit = toPositiveInt(env.MAX_REQ_PER_MINUTE_PER_IP, 6);
+  const dayReqLimit = toPositiveInt(env.MAX_REQ_PER_DAY, 400);
+  const monthReqLimit = toPositiveInt(env.MAX_REQ_PER_MONTH, 8000);
+  const dayTokenLimit = toPositiveInt(env.MAX_TOKENS_PER_DAY, 350000);
+  const monthTokenLimit = toPositiveInt(env.MAX_TOKENS_PER_MONTH, 7000000);
+
+  const rows = await callSupabaseRpc(env, "enforce_chat_guard", {
+    p_client_hash: clientHash,
+    p_max_req_per_minute: minuteLimit,
+    p_max_req_per_day: dayReqLimit,
+    p_max_req_per_month: monthReqLimit,
+    p_max_tokens_per_day: dayTokenLimit,
+    p_max_tokens_per_month: monthTokenLimit
+  });
+  const result = Array.isArray(rows) ? rows[0] : rows;
+  if (!result) return { allowed: false, reason: "guard_unknown", retryAfter: 30 };
+  return {
+    allowed: Boolean(result.allowed),
+    reason: result.reason || "",
+    retryAfter: toPositiveInt(result.retry_after_seconds, 0)
+  };
+}
+
+async function recordChatTokens(env, usage) {
+  const promptTokens = toPositiveInt(usage?.promptTokens, 0);
+  const outputTokens = toPositiveInt(usage?.outputTokens, 0);
+  const totalTokens = toPositiveInt(usage?.totalTokens, promptTokens + outputTokens);
+  if (!promptTokens && !outputTokens && !totalTokens) return;
+
+  await callSupabaseRpc(env, "record_chat_tokens", {
+    p_prompt_tokens: promptTokens,
+    p_output_tokens: outputTokens,
+    p_total_tokens: totalTokens
+  });
+}
+
 async function generateAnswer(apiKey, question, rows) {
   if (!rows || rows.length === 0) {
-    return "Bu konuda kaynaklarda bilgi bulamadım.";
+    return {
+      text: "Bu konuda kaynaklarda bilgi bulamadım.",
+      usage: { promptTokens: 0, outputTokens: 0, totalTokens: 0 }
+    };
   }
 
   const topRows = (rows || []).slice(0, 6);
@@ -160,30 +255,30 @@ async function generateAnswer(apiKey, question, rows) {
       const label = i === 0
         ? "Ana Makale"
         : (Number(r._titleHits || 0) > 0 ? "Baslik Eslesmeli Makale" : "Ilgili Makale");
-      return `${label} ${i + 1}: ${r.title}\nİçerik Özeti:\n${snippet}`;
+      return `${label} ${i + 1}: ${r.title}\nIcerik Ozeti:\n${snippet}`;
     })
     .join("\n\n");
 
-  const prompt = `Sen Mehmet Gülümser'in web sitesindeki dijital asistansın.
+  const prompt = `Sen Mehmet Gulumser'in web sitesindeki dijital asistansin.
 
 Kurallar:
 - Sadece verilen kaynaklara dayan.
-- Bilgi yoksa net olarak "Bu konuda kaynaklarda bilgi bulamadım." de.
-- Cevap Türkçe, derli toplu ve anlaşılır olsun.
-- Gerekliyse 3-6 maddede özetle.
-- Cevapta önce "Ana Makale" bilgisini temel al, sonra diğer ilgili makalelerle destekle.
-- Markdown işaretleri kullanma (**, __, ##, * gibi).
-- Düz metin yaz; maddeleme için sadece "-" kullan.
-- URL paylaşma.
-- "Kaynaklar", "İlgili makaleler" gibi bir başlık ekleme.
+- Bilgi yoksa net olarak "Bu konuda kaynaklarda bilgi bulamadim." de.
+- Cevap Turkce, derli toplu ve anlasilir olsun.
+- Gerekliyse 3-6 maddede ozetle.
+- Cevapta once "Ana Makale" bilgisini temel al, sonra diger ilgili makalelerle destekle.
+- Markdown isaretleri kullanma (**, __, ##, * gibi).
+- Duz metin yaz; maddeleme icin sadece "-" kullan.
+- URL paylasma.
+- "Kaynaklar", "Ilgili makaleler" gibi bir baslik ekleme.
 
 Soru: ${question}
 
 Kaynaklar:
 ${context}
 
-Cevap formatı:
-1) Kısa yanıt
+Cevap formati:
+1) Kisa yanit
 2) Gerekirse maddeler`;
 
   const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
@@ -202,9 +297,27 @@ Cevap formatı:
     const detail = await r.text();
     throw new Error(`Gemini API error: ${r.status} ${detail}`);
   }
+
   const data = await r.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Yanıt üretilemedi.";
-  return text;
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Yanit uretilemedi.";
+  const usageMeta = data?.usageMetadata || {};
+  const promptTokens = toPositiveInt(
+    usageMeta.promptTokenCount ?? usageMeta.inputTokenCount,
+    0
+  );
+  const outputTokens = toPositiveInt(
+    usageMeta.candidatesTokenCount ?? usageMeta.outputTokenCount,
+    0
+  );
+  const totalTokens = toPositiveInt(
+    usageMeta.totalTokenCount,
+    promptTokens + outputTokens
+  );
+
+  return {
+    text,
+    usage: { promptTokens, outputTokens, totalTokens }
+  };
 }
 
 function sentenceSplit(text) {
@@ -288,7 +401,7 @@ function buildRelatedArticles(rows, question, limit = 5) {
 function fallbackFromSources(rows, question) {
   const related = buildRelatedArticles(rows, question);
   if (!related.length) return "Bu konuda kaynaklarda bilgi bulamadım.";
-  return "Bu soru için ilgili makaleler bulundu. İstersen listedeki bir makaleyi seç, sadece onun üzerinden net bir özet çıkarayım.";
+  return "Bu soru için ilgili makaleler bulundu. Istersen listedeki bir makaleyi sec, sadece onun uzerinden net bir ozet cikarayim.";
 }
 
 export default {
@@ -310,8 +423,19 @@ export default {
 
     try {
       const { message } = await request.json();
-      if (!message || !message.trim()) return json({ error: "Mesaj boş olamaz" }, 400);
+      if (!message || !message.trim()) return json({ error: "Mesaj bos olamaz" }, 400);
       const question = message.trim();
+
+      const clientHash = await getClientHash(request);
+      const guard = await enforceChatGuard(env, clientHash);
+      if (!guard.allowed) {
+        return json({
+          error: limitMessage(guard.reason),
+          code: guard.reason || "guard_rejected",
+          retryAfter: guard.retryAfter || 0
+        }, 429);
+      }
+
       const topK = Number(env.TOP_K || "8");
       const retrievalCount = Math.max(16, topK * 3);
 
@@ -346,8 +470,11 @@ export default {
 
       const answerRows = rankedRows.slice(0, Math.max(8, topK + 2));
       let reply = "";
+      let usage = null;
       try {
-        reply = await generateAnswer(env.GEMINI_API_KEY, question, answerRows);
+        const llm = await generateAnswer(env.GEMINI_API_KEY, question, answerRows);
+        reply = llm.text;
+        usage = llm.usage;
       } catch (llmErr) {
         const msg = String(llmErr || "");
         if (msg.includes("RATE_LIMIT")) {
@@ -357,11 +484,19 @@ export default {
         }
       }
 
+      if (usage) {
+        try {
+          await recordChatTokens(env, usage);
+        } catch {
+          // Token kaydi basarisiz olsa da ana yaniti engelleme.
+        }
+      }
+
       const relatedArticles = buildRelatedArticles(rankedRows, question);
       const sources = relatedArticles.map((item) => item.url);
       return json({ reply, sources, relatedArticles });
     } catch (err) {
-      return json({ error: "İstek işlenemedi", detail: String(err) }, 500);
+      return json({ error: "Istek islenemedi", detail: String(err) }, 500);
     }
   }
 };

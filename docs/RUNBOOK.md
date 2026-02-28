@@ -68,6 +68,8 @@ Scraper + indexer paketleri:
 1) DB semasi:
 - Supabase SQL Editor'da `infra/supabase/schema.sql` calistir
 - Supabase SQL Editor'da `infra/supabase/migrations/001_fts_chunks.sql` calistir
+- Supabase SQL Editor'da `infra/supabase/migrations/002_fts_title_boost.sql` calistir
+- Supabase SQL Editor'da `infra/supabase/migrations/003_chat_guards.sql` calistir
 
 2) Yazilari cek ve DB'ye yaz:
 - `python3 services/scraper/scrape_and_store.py --to-db --out data/raw/articles.json`
@@ -92,6 +94,14 @@ Secret'lar:
 - `SUPABASE_URL` (https://<project>.supabase.co)
 - `SUPABASE_SERVICE_ROLE_KEY`
 
+Onemli env var'lar (`wrangler.toml`):
+- `TOP_K`
+- `MAX_REQ_PER_MINUTE_PER_IP`
+- `MAX_REQ_PER_DAY`
+- `MAX_REQ_PER_MONTH`
+- `MAX_TOKENS_PER_DAY`
+- `MAX_TOKENS_PER_MONTH`
+
 Komutlar:
 - `wrangler login`
 - `wrangler secret put GEMINI_API_KEY`
@@ -102,6 +112,7 @@ Komutlar:
 Not:
 - Worker retrieval FTS RPC kullanir.
 - LLM hatasinda kaynak listesini fallback olarak dondurur.
+- Worker, Supabase uzerinden IP/dakika limiti + gunluk/aylik istek ve token butcesi uygular.
 
 ### 9.2) Cloudflare Pages (Website)
 Dizin:
@@ -151,6 +162,10 @@ with psycopg.connect(os.environ['DATABASE_URL'], prepare_threshold=None) as c:
       cur.execute(f'select count(*) from {t}')
       print(t, cur.fetchone()[0])
 PY`
+
+Chat butce kontrolu (SQL):
+- `select * from chat_usage_daily order by usage_date desc limit 7;`
+- `select * from chat_usage_monthly order by usage_month desc limit 6;`
 
 ## 13) Bilinen Limitler / Ileride Iyilestirme
 - Retrieval FTS oldugu icin anlamsal eslesme embedding kadar iyi olmayabilir.
