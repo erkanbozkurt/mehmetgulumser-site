@@ -15,8 +15,8 @@
   }
 
   function siteLabel(host) {
-    if ((host || '').includes('ajansbakircay')) return 'Ajans Bakircay';
-    if ((host || '').includes('gazeteyenigun')) return 'Gazete Yenigun';
+    if ((host || '').includes('ajansbakircay')) return 'Ajans Bakırcay';
+    if ((host || '').includes('gazeteyenigun')) return 'Gazete Yenigün';
     return host || 'Kaynak';
   }
 
@@ -46,7 +46,7 @@
         <h3>${title}</h3>
         <p class="meta">${label}${date ? ' · ' + date : ''}</p>
         ${excerpt ? `<p class="meta">${excerpt}</p>` : ''}
-        <a href="${it.source_url}" target="_blank" rel="noopener noreferrer">Yaziyi oku</a>
+        <a href="${it.source_url}" target="_blank" rel="noopener noreferrer">Yazıyı oku</a>
       `;
 
       root.appendChild(el);
@@ -54,15 +54,15 @@
   }
 
   async function load() {
-    status.textContent = 'Yazilar yukleniyor...';
+    status.textContent = 'Yazılar yükleniyor...';
 
     const r = await fetch(`${API_BASE}/api/articles?limit=100`, { method: 'GET' });
-    if (!r.ok) throw new Error('Liste alinamadi');
+    if (!r.ok) throw new Error('Liste alınamadı');
 
     const data = await r.json();
     const items = Array.isArray(data.items) ? data.items : [];
 
-    status.textContent = `${items.length} yazi bulundu.`;
+    status.textContent = `${items.length} yazı bulundu.`;
 
     const applyFilter = () => {
       const q = (search?.value || '').trim().toLocaleLowerCase('tr-TR');
@@ -71,7 +71,7 @@
         return;
       }
       const filtered = items.filter((x) => (x.title || '').toLocaleLowerCase('tr-TR').includes(q));
-      status.textContent = `${filtered.length} yazi bulundu.`;
+      status.textContent = `${filtered.length} yazı bulundu.`;
       render(filtered);
     };
 
@@ -80,6 +80,6 @@
   }
 
   load().catch(() => {
-    status.textContent = 'Yazilar yuklenemedi. Daha sonra tekrar deneyin.';
+    status.textContent = 'Yazılar yüklenemedi. Daha sonra tekrar deneyin.';
   });
 })();

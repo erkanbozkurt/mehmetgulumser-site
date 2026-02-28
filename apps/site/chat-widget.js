@@ -11,7 +11,7 @@
     <div id="mg-chat-log"><div class="msg bot">Merhaba, Mehmet Gülümser yazıları hakkında soru sorabilirsiniz.</div></div>
     <div id="mg-chat-input-row">
       <input id="mg-chat-input" placeholder="Bir soru yazın..." />
-      <button id="mg-chat-send" aria-label="Gonder" title="Gonder">
+      <button id="mg-chat-send" aria-label="Gönder" title="Gönder">
         <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
           <path fill="currentColor" d="M3 20.5l18-8.5L3 3.5v6l12 2.5-12 2.5z"></path>
         </svg>
@@ -79,7 +79,7 @@
   function addThinking() {
     const d = document.createElement('div');
     d.className = 'msg bot thinking';
-    d.innerHTML = 'Dusunuyor<span class="dots"><span>.</span><span>.</span><span>.</span></span>';
+    d.innerHTML = 'Düşünüyor<span class="dots"><span>.</span><span>.</span><span>.</span></span>';
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
     return d;
@@ -99,7 +99,7 @@
 
     const d = document.createElement('div');
     d.className = 'msg bot';
-    d.innerHTML = ['Ilgili makaleler', ...links].join('<br>');
+    d.innerHTML = ['İlgili makaleler', ...links].join('<br>');
     log.appendChild(d);
     log.scrollTop = log.scrollHeight;
   }

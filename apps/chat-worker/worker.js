@@ -29,8 +29,19 @@ const STOPWORDS = new Set([
   "en","gibi","hangi","hani","hatta","hem","her","ile","için","ise","işte","kadar","ki",
   "kim","mi","mı","mu","mü","nasıl","ne","neden","nerede","nereye","niye","o","olan","olarak",
   "oldu","olduğu","oluyor","olsa","olsun","onlar","orada","sanki","şey","siz","şu","tabii",
-  "ve","veya","ya","yani"
+  "ve","veya","ya","yani",
+  "hakkında","hakkinda","neler","dersin","misin","mısın","miyim","mıyım","sence","aciklar","açıklar"
 ]);
+
+const TOPIC_ALIASES = {
+  "dikili": ["dikili", "bademli", "çandarlı", "candarli", "hanımın koyu", "hanimin koyu", "kalem adası", "kalem adasi"],
+  "bademli": ["bademli", "dikili", "çandarlı", "candarli"],
+  "çandarlı": ["çandarlı", "candarli", "dikili", "bademli"],
+  "candarli": ["candarli", "çandarlı", "dikili", "bademli"],
+  "midilli": ["midilli", "dikili", "ayvalık", "ayvalik"],
+  "ayvalık": ["ayvalık", "ayvalik", "midilli"],
+  "ayvalik": ["ayvalik", "ayvalık", "midilli"]
+};
 
 function extractKeywords(input, minLen = 4, maxCount = 6) {
   const words = (input || "")
@@ -44,6 +55,26 @@ function extractKeywords(input, minLen = 4, maxCount = 6) {
 
 function normalizeForMatch(text) {
   return (text || "").toLocaleLowerCase("tr-TR");
+}
+
+function getTopicTerms(question, keywords = []) {
+  const q = normalizeForMatch(question);
+  const terms = new Set();
+
+  for (const keyword of keywords) {
+    terms.add(normalizeForMatch(keyword));
+    const aliases = TOPIC_ALIASES[keyword];
+    if (aliases) {
+      for (const alias of aliases) terms.add(normalizeForMatch(alias));
+    }
+  }
+
+  for (const [topic, aliases] of Object.entries(TOPIC_ALIASES)) {
+    if (!q.includes(topic)) continue;
+    for (const alias of aliases) terms.add(normalizeForMatch(alias));
+  }
+
+  return [...terms].filter(Boolean);
 }
 
 function countKeywordHits(text, keywords) {
@@ -73,6 +104,8 @@ function countKeywordOccurrences(text, keywords) {
 function rankRowsForQuestion(rows, question) {
   const keywords = extractKeywords(question);
   const phrase = keywords.slice(0, 2).join(" ");
+  const topicTerms = getTopicTerms(question, keywords);
+  const hasTopicTerms = topicTerms.length > 0;
 
   return (rows || [])
     .map((row, idx) => {
@@ -82,6 +115,8 @@ function rankRowsForQuestion(rows, question) {
       const titleHits = countKeywordHits(title, keywords);
       const chunkHits = countKeywordHits(chunk, keywords);
       const chunkHitCount = countKeywordOccurrences(chunk, keywords);
+      const topicHits = countKeywordHits(`${title} ${chunk}`, topicTerms);
+      const titleTopicHits = countKeywordHits(title, topicTerms);
       const allKeywordsInTitle = keywords.length > 0 && keywords.every((k) => title.includes(k));
       const phraseInTitle = phrase.length >= 5 && title.includes(phrase);
 
@@ -90,14 +125,19 @@ function rankRowsForQuestion(rows, question) {
         (titleHits * 2.2) +
         (chunkHits * 0.35) +
         (chunkHitCount * 0.12) +
+        (topicHits * 0.8) +
+        (titleTopicHits * 0.95) +
         (allKeywordsInTitle ? 2.4 : 0) +
-        (phraseInTitle ? 1.2 : 0);
+        (phraseInTitle ? 1.2 : 0) +
+        (hasTopicTerms && topicHits === 0 ? -0.45 : 0);
 
       return {
         ...row,
         _idx: idx,
         _titleHits: titleHits,
         _chunkHitCount: chunkHitCount,
+        _topicHits: topicHits,
+        _titleTopicHits: titleTopicHits,
         _relevance: relevance
       };
     })
@@ -163,9 +203,11 @@ function mergeRows(...rowArrays) {
 }
 
 function buildBroadQuery(input) {
-  const unique = extractKeywords(input, 4, 6);
-  if (!unique.length) return "";
-  return unique.join(" OR ");
+  const keywords = extractKeywords(input, 4, 6);
+  if (!keywords.length) return "";
+  const topicTerms = getTopicTerms(input, keywords);
+  const terms = [...new Set([...keywords, ...topicTerms])].slice(0, 10);
+  return terms.join(" OR ");
 }
 
 function getClientIp(request) {
@@ -367,14 +409,39 @@ function buildExtractiveAnswer(question, rows) {
 
 function buildRelatedArticles(rows, question, limit = 5) {
   const ranked = rankRowsForQuestion(rows, question);
+  const keywords = extractKeywords(question, 4, 6);
+  const topicTerms = getTopicTerms(question, keywords);
+  const hasTopicTerms = topicTerms.length > 0;
   const withTitleMatch = ranked.filter((row) => row._titleHits > 0);
   const withoutTitleMatch = ranked.filter((row) => row._titleHits === 0);
   const bestSimilarity = Number(ranked?.[0]?.similarity || 0);
   const strictFloor = bestSimilarity > 0 ? bestSimilarity * 0.82 : 0;
   const baseFloor = bestSimilarity > 0 ? bestSimilarity * 0.58 : 0;
 
-  let prioritized = ranked;
-  if (withTitleMatch.length > 0) {
+  let prioritized = [];
+  const topicMatches = hasTopicTerms
+    ? ranked.filter((row) => Number(row._topicHits || 0) > 0)
+    : [];
+
+  if (hasTopicTerms && topicMatches.length > 0) {
+    const strongTopicMatches = topicMatches.filter((row) => {
+      const sim = Number(row.similarity || 0);
+      const topicHits = Number(row._topicHits || 0);
+      const chunkHits = Number(row._chunkHitCount || 0);
+      const titleHits = Number(row._titleHits || 0);
+      return (
+        titleHits > 0 ||
+        topicHits >= 2 ||
+        (topicHits >= 1 && sim >= strictFloor && chunkHits >= 2)
+      );
+    });
+    const strongSupport = ranked.filter(
+      (row) =>
+        Number(row.similarity || 0) >= baseFloor &&
+        Number(row._chunkHitCount || 0) >= 2
+    );
+    prioritized = [...strongTopicMatches, ...strongSupport];
+  } else if (withTitleMatch.length > 0) {
     const strongSupport = withoutTitleMatch.filter(
       (row) =>
         Number(row.similarity || 0) >= strictFloor &&
@@ -386,6 +453,8 @@ function buildRelatedArticles(rows, question, limit = 5) {
       (row) => Number(row.similarity || 0) >= baseFloor && Number(row._chunkHitCount || 0) >= 1
     );
   }
+
+  if (!prioritized.length) prioritized = ranked;
 
   const unique = [];
   const seen = new Set();
@@ -468,7 +537,29 @@ export default {
         }
       }
 
-      const answerRows = rankedRows.slice(0, Math.max(8, topK + 2));
+      const keywords = extractKeywords(question, 4, 6);
+      const topicTerms = getTopicTerms(question, keywords);
+      const hasTopicTerms = topicTerms.length > 0;
+      const bestSimilarity = Number(rankedRows?.[0]?.similarity || 0);
+      const strictFloor = bestSimilarity > 0 ? bestSimilarity * 0.82 : 0;
+
+      const topicalRows = rankedRows.filter((row) => {
+        const sim = Number(row.similarity || 0);
+        const topicHits = Number(row._topicHits || 0);
+        const chunkHits = Number(row._chunkHitCount || 0);
+        const titleHits = Number(row._titleHits || 0);
+        if (!hasTopicTerms) {
+          return topicHits > 0 || titleHits > 0;
+        }
+        return (
+          titleHits > 0 ||
+          topicHits >= 2 ||
+          (topicHits >= 1 && sim >= strictFloor && chunkHits >= 2)
+        );
+      });
+
+      const answerCandidateRows = topicalRows.length >= 3 ? topicalRows : rankedRows;
+      const answerRows = answerCandidateRows.slice(0, Math.max(8, topK + 2));
       let reply = "";
       let usage = null;
       try {
