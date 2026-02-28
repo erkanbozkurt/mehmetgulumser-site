@@ -16,6 +16,12 @@ function toPositiveInt(value, fallback) {
   return Math.max(0, Math.floor(n));
 }
 
+function normalizeRetrievalMode(input) {
+  const mode = String(input || "").trim().toLowerCase();
+  if (mode === "long_context") return "long_context";
+  return "hybrid";
+}
+
 async function sha256Hex(input) {
   const bytes = new TextEncoder().encode(input);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -181,6 +187,27 @@ async function listArticles(env, limit) {
   return r.json();
 }
 
+async function fetchArticlesForLongContext(env, limit) {
+  const maxLimit = Math.max(1, Math.min(500, Number(limit || "120")));
+  const url = new URL(`${env.SUPABASE_URL}/rest/v1/articles`);
+  url.searchParams.set("select", "title,source_url,source_site,published_at,excerpt,content_text");
+  url.searchParams.set("order", "published_at.desc.nullslast");
+  url.searchParams.set("limit", String(maxLimit));
+
+  const r = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+      authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`
+    }
+  });
+  if (!r.ok) {
+    const detail = await r.text();
+    throw new Error(`Supabase long-context articles error: ${r.status} ${detail}`);
+  }
+  return r.json();
+}
+
 async function retrieveChunks(env, queryText, matchCount) {
   return callSupabaseRpc(env, "match_article_chunks_fts", {
     query_text: queryText,
@@ -282,6 +309,46 @@ async function recordChatTokens(env, usage) {
   });
 }
 
+async function callGemini(apiKey, prompt, temperature = 0.15) {
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature }
+    })
+  });
+
+  if (r.status === 429) {
+    throw new Error("RATE_LIMIT");
+  }
+  if (!r.ok) {
+    const detail = await r.text();
+    throw new Error(`Gemini API error: ${r.status} ${detail}`);
+  }
+
+  const data = await r.json();
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Yanit uretilemedi.";
+  const usageMeta = data?.usageMetadata || {};
+  const promptTokens = toPositiveInt(
+    usageMeta.promptTokenCount ?? usageMeta.inputTokenCount,
+    0
+  );
+  const outputTokens = toPositiveInt(
+    usageMeta.candidatesTokenCount ?? usageMeta.outputTokenCount,
+    0
+  );
+  const totalTokens = toPositiveInt(
+    usageMeta.totalTokenCount,
+    promptTokens + outputTokens
+  );
+
+  return {
+    text,
+    usage: { promptTokens, outputTokens, totalTokens }
+  };
+}
+
 async function generateAnswer(apiKey, question, rows) {
   if (!rows || rows.length === 0) {
     return {
@@ -322,44 +389,143 @@ ${context}
 Cevap formati:
 1) Kisa yanit
 2) Gerekirse maddeler`;
+  return callGemini(apiKey, prompt, 0.15);
+}
 
-  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.15 }
+function rankArticlesForQuestion(articles, question) {
+  const keywords = extractKeywords(question, 3, 8);
+  const topicTerms = getTopicTerms(question, keywords);
+  const hasTopicTerms = topicTerms.length > 0;
+
+  return (articles || [])
+    .map((article, idx) => {
+      const title = normalizeForMatch(article.title);
+      const content = normalizeForMatch(article.content_text);
+      const excerpt = normalizeForMatch(article.excerpt);
+      const joined = `${title}\n${excerpt}\n${content}`;
+
+      const titleHits = countKeywordHits(title, keywords);
+      const bodyHits = countKeywordHits(joined, keywords);
+      const bodyOcc = countKeywordOccurrences(joined, keywords);
+      const topicHits = countKeywordHits(joined, topicTerms);
+      const titleTopicHits = countKeywordHits(title, topicTerms);
+
+      const score =
+        (titleHits * 2.5) +
+        (bodyHits * 0.85) +
+        (bodyOcc * 0.1) +
+        (topicHits * 0.75) +
+        (titleTopicHits * 0.95) +
+        (hasTopicTerms && topicHits === 0 ? -0.5 : 0);
+
+      return {
+        ...article,
+        _idx: idx,
+        _score: score,
+        _titleHits: titleHits,
+        _topicHits: topicHits
+      };
     })
-  });
+    .sort((a, b) => {
+      if (b._score !== a._score) return b._score - a._score;
+      const aDate = Date.parse(a.published_at || "") || 0;
+      const bDate = Date.parse(b.published_at || "") || 0;
+      return bDate - aDate;
+    });
+}
 
-  if (r.status === 429) {
-    throw new Error("RATE_LIMIT");
+function buildLongContextCorpus(rankedArticles, env) {
+  const perArticleChars = Math.max(400, Math.min(12000, toPositiveInt(env.LONG_CONTEXT_PER_ARTICLE_CHARS, 4500)));
+  const maxChars = Math.max(5000, Math.min(500000, toPositiveInt(env.LONG_CONTEXT_MAX_CHARS, 220000)));
+  let usedChars = 0;
+  const blocks = [];
+
+  for (const article of rankedArticles) {
+    if (usedChars >= maxChars) break;
+    const content = String(article.content_text || "").replace(/\s+/g, " ").trim();
+    const excerpt = String(article.excerpt || "").replace(/\s+/g, " ").trim();
+    const source = article.source_url || "";
+    const published = article.published_at || "";
+    const snippet = content.slice(0, perArticleChars);
+    const block = [
+      `Baslik: ${article.title || "Makale"}`,
+      `Tarih: ${published}`,
+      `Kaynak: ${source}`,
+      excerpt ? `Ozet: ${excerpt}` : "",
+      `Icerik: ${snippet}`
+    ].filter(Boolean).join("\n");
+
+    if (!block) continue;
+    if (usedChars + block.length > maxChars) break;
+    blocks.push(block);
+    usedChars += block.length;
   }
-  if (!r.ok) {
-    const detail = await r.text();
-    throw new Error(`Gemini API error: ${r.status} ${detail}`);
+
+  return blocks.join("\n\n---\n\n");
+}
+
+function buildRelatedArticlesFromRankedArticles(rankedArticles, limit = 5) {
+  const unique = [];
+  const seen = new Set();
+  for (const article of rankedArticles || []) {
+    if (!article?.source_url || seen.has(article.source_url)) continue;
+    const score = Number(article._score || 0);
+    if (score <= 0 && unique.length >= 2) continue;
+    seen.add(article.source_url);
+    unique.push({
+      title: article.title || "Makale",
+      url: article.source_url
+    });
+    if (unique.length >= limit) break;
+  }
+  return unique;
+}
+
+function fallbackFromLongContextArticles(rankedArticles) {
+  const related = buildRelatedArticlesFromRankedArticles(rankedArticles, 5);
+  if (!related.length) return "Bu konuda kaynaklarda bilgi bulamadım.";
+  return "Bu soru icin ilgili makaleler bulundu. Istersen listedeki bir makale uzerinden daha net bir ozet cikarabilirim.";
+}
+
+async function generateAnswerLongContext(apiKey, question, rankedArticles, env) {
+  if (!rankedArticles || rankedArticles.length === 0) {
+    return {
+      text: "Bu konuda kaynaklarda bilgi bulamadım.",
+      usage: { promptTokens: 0, outputTokens: 0, totalTokens: 0 }
+    };
   }
 
-  const data = await r.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Yanit uretilemedi.";
-  const usageMeta = data?.usageMetadata || {};
-  const promptTokens = toPositiveInt(
-    usageMeta.promptTokenCount ?? usageMeta.inputTokenCount,
-    0
-  );
-  const outputTokens = toPositiveInt(
-    usageMeta.candidatesTokenCount ?? usageMeta.outputTokenCount,
-    0
-  );
-  const totalTokens = toPositiveInt(
-    usageMeta.totalTokenCount,
-    promptTokens + outputTokens
-  );
+  const corpus = buildLongContextCorpus(rankedArticles, env);
+  if (!corpus) {
+    return {
+      text: "Bu konuda kaynaklarda bilgi bulamadım.",
+      usage: { promptTokens: 0, outputTokens: 0, totalTokens: 0 }
+    };
+  }
 
-  return {
-    text,
-    usage: { promptTokens, outputTokens, totalTokens }
-  };
+  const prompt = `Sen Mehmet Gulumser'in web sitesindeki dijital asistansin.
+
+Kurallar:
+- Sadece verilen arsiv metinlerine dayan.
+- Bilgi yoksa net olarak "Bu konuda kaynaklarda bilgi bulamadim." de.
+- Cevap Turkce, derli toplu ve anlasilir olsun.
+- Gerekliyse 3-6 maddede ozetle.
+- Soruya dogrudan ilgili kisimlari one cikar, alakasiz detaylari ekleme.
+- Markdown isaretleri kullanma (**, __, ##, * gibi).
+- Duz metin yaz; maddeleme icin sadece "-" kullan.
+- URL paylasma.
+- "Kaynaklar", "Ilgili makaleler" gibi bir baslik ekleme.
+
+Soru: ${question}
+
+Arsiv:
+${corpus}
+
+Cevap formati:
+1) Kisa yanit
+2) Gerekirse maddeler`;
+
+  return callGemini(apiKey, prompt, 0.15);
 }
 
 function sentenceSplit(text) {
@@ -505,74 +671,102 @@ export default {
         }, 429);
       }
 
+      const retrievalMode = normalizeRetrievalMode(env.RETRIEVAL_MODE);
       const topK = Number(env.TOP_K || "8");
-      const retrievalCount = Math.max(16, topK * 3);
-
-      let rows = await retrieveChunks(env, question, retrievalCount);
-      const broadQuery = buildBroadQuery(question);
-      if (broadQuery) {
-        const broadRows = await retrieveChunks(env, broadQuery, retrievalCount);
-        rows = mergeRows(rows, broadRows);
-      }
-
-      if (!rows || rows.length === 0) {
-        const fallbackQuery = buildBroadQuery(question);
-        if (fallbackQuery) {
-          rows = await retrieveChunks(env, fallbackQuery, retrievalCount);
-        }
-      }
-      if (!rows || rows.length === 0) {
-        const shorterQuery = extractKeywords(question, 3, 8).join(" OR ");
-        if (shorterQuery) {
-          rows = await retrieveChunks(env, shorterQuery, retrievalCount);
-        }
-      }
-
-      let rankedRows = rankRowsForQuestion(rows, question);
-      if (!rankedRows.length) {
-        const broadQuery2 = buildBroadQuery(question);
-        if (broadQuery2) {
-          const broadOnly = await retrieveChunks(env, broadQuery2, retrievalCount);
-          rankedRows = rankRowsForQuestion(broadOnly, question);
-        }
-      }
-
-      const keywords = extractKeywords(question, 4, 6);
-      const topicTerms = getTopicTerms(question, keywords);
-      const hasTopicTerms = topicTerms.length > 0;
-      const bestSimilarity = Number(rankedRows?.[0]?.similarity || 0);
-      const strictFloor = bestSimilarity > 0 ? bestSimilarity * 0.82 : 0;
-
-      const topicalRows = rankedRows.filter((row) => {
-        const sim = Number(row.similarity || 0);
-        const topicHits = Number(row._topicHits || 0);
-        const chunkHits = Number(row._chunkHitCount || 0);
-        const titleHits = Number(row._titleHits || 0);
-        if (!hasTopicTerms) {
-          return topicHits > 0 || titleHits > 0;
-        }
-        return (
-          titleHits > 0 ||
-          topicHits >= 2 ||
-          (topicHits >= 1 && sim >= strictFloor && chunkHits >= 2)
-        );
-      });
-
-      const answerCandidateRows = topicalRows.length >= 3 ? topicalRows : rankedRows;
-      const answerRows = answerCandidateRows.slice(0, Math.max(8, topK + 2));
       let reply = "";
       let usage = null;
-      try {
-        const llm = await generateAnswer(env.GEMINI_API_KEY, question, answerRows);
-        reply = llm.text;
-        usage = llm.usage;
-      } catch (llmErr) {
-        const msg = String(llmErr || "");
-        if (msg.includes("RATE_LIMIT")) {
-          reply = buildExtractiveAnswer(question, answerRows);
-        } else {
-          reply = fallbackFromSources(answerRows, question);
+      let relatedArticles = [];
+
+      if (retrievalMode === "long_context") {
+        const articleLimit = Math.max(20, Math.min(500, toPositiveInt(env.LONG_CONTEXT_ARTICLE_LIMIT, 120)));
+        const allArticles = await fetchArticlesForLongContext(env, articleLimit);
+        const rankedArticles = rankArticlesForQuestion(allArticles, question);
+        const supportLimit = Math.max(10, Math.min(rankedArticles.length, toPositiveInt(env.LONG_CONTEXT_SUPPORT_ARTICLES, 100)));
+        const supportArticles = rankedArticles.slice(0, supportLimit);
+
+        try {
+          const llm = await generateAnswerLongContext(env.GEMINI_API_KEY, question, supportArticles, env);
+          reply = llm.text;
+          usage = llm.usage;
+        } catch (llmErr) {
+          const msg = String(llmErr || "");
+          if (msg.includes("RATE_LIMIT")) {
+            reply = "Gemini kotasi dolu oldugu icin su an long-context modunda yanit uretilemiyor. Lutfen daha sonra tekrar deneyin.";
+          } else {
+            reply = fallbackFromLongContextArticles(supportArticles);
+          }
         }
+
+        relatedArticles = buildRelatedArticlesFromRankedArticles(supportArticles, 5);
+      } else {
+        const retrievalCount = Math.max(16, topK * 3);
+
+        let rows = await retrieveChunks(env, question, retrievalCount);
+        const broadQuery = buildBroadQuery(question);
+        if (broadQuery) {
+          const broadRows = await retrieveChunks(env, broadQuery, retrievalCount);
+          rows = mergeRows(rows, broadRows);
+        }
+
+        if (!rows || rows.length === 0) {
+          const fallbackQuery = buildBroadQuery(question);
+          if (fallbackQuery) {
+            rows = await retrieveChunks(env, fallbackQuery, retrievalCount);
+          }
+        }
+        if (!rows || rows.length === 0) {
+          const shorterQuery = extractKeywords(question, 3, 8).join(" OR ");
+          if (shorterQuery) {
+            rows = await retrieveChunks(env, shorterQuery, retrievalCount);
+          }
+        }
+
+        let rankedRows = rankRowsForQuestion(rows, question);
+        if (!rankedRows.length) {
+          const broadQuery2 = buildBroadQuery(question);
+          if (broadQuery2) {
+            const broadOnly = await retrieveChunks(env, broadQuery2, retrievalCount);
+            rankedRows = rankRowsForQuestion(broadOnly, question);
+          }
+        }
+
+        const keywords = extractKeywords(question, 4, 6);
+        const topicTerms = getTopicTerms(question, keywords);
+        const hasTopicTerms = topicTerms.length > 0;
+        const bestSimilarity = Number(rankedRows?.[0]?.similarity || 0);
+        const strictFloor = bestSimilarity > 0 ? bestSimilarity * 0.82 : 0;
+
+        const topicalRows = rankedRows.filter((row) => {
+          const sim = Number(row.similarity || 0);
+          const topicHits = Number(row._topicHits || 0);
+          const chunkHits = Number(row._chunkHitCount || 0);
+          const titleHits = Number(row._titleHits || 0);
+          if (!hasTopicTerms) {
+            return topicHits > 0 || titleHits > 0;
+          }
+          return (
+            titleHits > 0 ||
+            topicHits >= 2 ||
+            (topicHits >= 1 && sim >= strictFloor && chunkHits >= 2)
+          );
+        });
+
+        const answerCandidateRows = topicalRows.length >= 3 ? topicalRows : rankedRows;
+        const answerRows = answerCandidateRows.slice(0, Math.max(8, topK + 2));
+        try {
+          const llm = await generateAnswer(env.GEMINI_API_KEY, question, answerRows);
+          reply = llm.text;
+          usage = llm.usage;
+        } catch (llmErr) {
+          const msg = String(llmErr || "");
+          if (msg.includes("RATE_LIMIT")) {
+            reply = buildExtractiveAnswer(question, answerRows);
+          } else {
+            reply = fallbackFromSources(answerRows, question);
+          }
+        }
+
+        relatedArticles = buildRelatedArticles(rankedRows, question);
       }
 
       if (usage) {
@@ -583,9 +777,8 @@ export default {
         }
       }
 
-      const relatedArticles = buildRelatedArticles(rankedRows, question);
       const sources = relatedArticles.map((item) => item.url);
-      return json({ reply, sources, relatedArticles });
+      return json({ reply, sources, relatedArticles, retrievalMode });
     } catch (err) {
       return json({ error: "Istek islenemedi", detail: String(err) }, 500);
     }

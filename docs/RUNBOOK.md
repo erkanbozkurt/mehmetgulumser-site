@@ -101,6 +101,11 @@ Onemli env var'lar (`wrangler.toml`):
 - `MAX_REQ_PER_MONTH`
 - `MAX_TOKENS_PER_DAY`
 - `MAX_TOKENS_PER_MONTH`
+- `RETRIEVAL_MODE` (`hybrid` veya `long_context`)
+- `LONG_CONTEXT_ARTICLE_LIMIT`
+- `LONG_CONTEXT_SUPPORT_ARTICLES`
+- `LONG_CONTEXT_PER_ARTICLE_CHARS`
+- `LONG_CONTEXT_MAX_CHARS`
 
 Komutlar:
 - `wrangler login`
