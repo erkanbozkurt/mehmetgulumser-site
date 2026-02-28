@@ -157,7 +157,10 @@ async function generateAnswer(apiKey, question, rows) {
   const context = topRows
     .map((r, i) => {
       const snippet = (r.chunk_text || "").slice(0, 1400);
-      return `Kaynak ${i + 1}: ${r.title}\nİçerik Özeti:\n${snippet}`;
+      const label = i === 0
+        ? "Ana Makale"
+        : (Number(r._titleHits || 0) > 0 ? "Baslik Eslesmeli Makale" : "Ilgili Makale");
+      return `${label} ${i + 1}: ${r.title}\nİçerik Özeti:\n${snippet}`;
     })
     .join("\n\n");
 
@@ -168,6 +171,7 @@ Kurallar:
 - Bilgi yoksa net olarak "Bu konuda kaynaklarda bilgi bulamadım." de.
 - Cevap Türkçe, derli toplu ve anlaşılır olsun.
 - Gerekliyse 3-6 maddede özetle.
+- Cevapta önce "Ana Makale" bilgisini temel al, sonra diğer ilgili makalelerle destekle.
 - Markdown işaretleri kullanma (**, __, ##, * gibi).
 - Düz metin yaz; maddeleme için sadece "-" kullan.
 - URL paylaşma.
@@ -251,15 +255,22 @@ function buildExtractiveAnswer(question, rows) {
 function buildRelatedArticles(rows, question, limit = 5) {
   const ranked = rankRowsForQuestion(rows, question);
   const withTitleMatch = ranked.filter((row) => row._titleHits > 0);
+  const withoutTitleMatch = ranked.filter((row) => row._titleHits === 0);
   const bestSimilarity = Number(ranked?.[0]?.similarity || 0);
-  const similarityFloor = bestSimilarity > 0 ? bestSimilarity * 0.55 : 0;
+  const strictFloor = bestSimilarity > 0 ? bestSimilarity * 0.82 : 0;
+  const baseFloor = bestSimilarity > 0 ? bestSimilarity * 0.58 : 0;
 
   let prioritized = ranked;
   if (withTitleMatch.length > 0) {
-    prioritized = withTitleMatch;
+    const strongSupport = withoutTitleMatch.filter(
+      (row) =>
+        Number(row.similarity || 0) >= strictFloor &&
+        Number(row._chunkHitCount || 0) >= 2
+    );
+    prioritized = [...withTitleMatch, ...strongSupport.slice(0, 2)];
   } else {
     prioritized = ranked.filter(
-      (row) => Number(row.similarity || 0) >= similarityFloor && Number(row._chunkHitCount || 0) >= 1
+      (row) => Number(row.similarity || 0) >= baseFloor && Number(row._chunkHitCount || 0) >= 1
     );
   }
 
@@ -333,7 +344,7 @@ export default {
         }
       }
 
-      const answerRows = rankedRows.slice(0, Math.max(6, topK));
+      const answerRows = rankedRows.slice(0, Math.max(8, topK + 2));
       let reply = "";
       try {
         reply = await generateAnswer(env.GEMINI_API_KEY, question, answerRows);
