@@ -333,7 +333,7 @@ export default {
         }
       }
 
-      const answerRows = rankedRows.slice(0, Math.max(10, topK + 4));
+      const answerRows = rankedRows.slice(0, Math.max(6, topK));
       let reply = "";
       try {
         reply = await generateAnswer(env.GEMINI_API_KEY, question, answerRows);
